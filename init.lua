@@ -1,122 +1,113 @@
-local rarity_levels = {
-    rare = 3,
-    very_rare = 4,
-    ultra_rare = 5
+myland = myland or {}
+myfortune = {}
+math.randomseed(os.time())
+myfortune.modpath = minetest.get_modpath("myfortuneblock")
+
+myfortune.rarity_levels = {
+    rare = {weight = 20, color = "#55FF55", label = "RARE", chat = ""},
+    very_rare = {weight = 5, color = "#5555FF", label = "VERY RARE", chat = ""},
+    ultra_rare = {weight = 1, color = "#AA00AA", label = "ULTRA RARE", chat = ""}
 }
 
-local excluded_nodes = {
-    "air",
-    "ignore"
+myfortune.config = {
+    structure_chance = 10,
+    mob_chance = 15,
+    trap_chance = 5,
 }
-
-local function is_excluded(node_name)
-    for _, excluded in ipairs(excluded_nodes) do
-        if node_name == excluded then
-            return true
-        end
-    end
-    return false
+local function formal_name(str)
+    local name = str:find(":") and str:split(":")[2] or str
+    name = name:gsub("_", " ")
+    return (name:gsub("^%l", string.upper))
 end
 
-local function assign_rarity(node_name)
-    local ultra_rare_keywords = {"diamond", "tnt:tnt"}
-    local very_rare_keywords = {"gold", "mese", "pick", "shovel", "axe", "sword", "tool"}
-    local rare_keywords = {"iron", "copper", "ore"}
-
-    local function matches_keywords(node_name, keywords)
-        for _, keyword in ipairs(keywords) do
-            if node_name:find(keyword) then
-                return true
-            end
-        end
-        return false
-    end
-
-    if matches_keywords(node_name, ultra_rare_keywords) then
-        return rarity_levels.ultra_rare
-    elseif matches_keywords(node_name, very_rare_keywords) then
-        return rarity_levels.very_rare
-    elseif matches_keywords(node_name, rare_keywords) then
-        return rarity_levels.rare
-    else
-        return nil
-    end
+local function colorize(text, hex)
+    return minetest.get_color_escape_sequence(hex) .. text .. minetest.get_color_escape_sequence("#ffffff")
 end
 
-local function build_drop_list()
-    local drop_list = {}
-    local all_registered = minetest.registered_items
-
-    for item_name, def in pairs(all_registered) do
-        if def
-           and def.description
-           and def.description ~= ""
-           and not is_excluded(item_name)
-           and not (def.groups and def.groups.not_in_creative_inventory and def.groups.not_in_creative_inventory > 0)
-        then
-            local rarity = assign_rarity(item_name)
-            if rarity then
-                table.insert(drop_list, {item = item_name, rarity = rarity})
-            end
-        end
-    end
-    return drop_list
+function myfortune.register_schematic(schem_data)
+    table.insert(myfortune.schematics, schem_data)
 end
 
-local dynamic_drop_list = build_drop_list()
-
-for _, item in ipairs(dynamic_drop_list) do
-    print(string.format("Item: %s - Rarity: %d", item.item, item.rarity))
+myfortune.registered_events = {}
+function myfortune.register_event(name, chance, func)
+    table.insert(myfortune.registered_events, {
+        name = name,
+        chance = chance,
+        action = func
+    })
 end
 
-local config = {
-    drop_list = dynamic_drop_list,
-    max_amount_multiplier = 2
-}
-
-local function calculate_total_weight(drop_list)
-    local total_weight = 0
-    for _, item in ipairs(drop_list) do
-        total_weight = total_weight + item.rarity
-    end
-    return total_weight
-end
-
-local function get_random_item(drop_list)
-    local total_weight = calculate_total_weight(drop_list)
-    local rand = math.random(1, total_weight)
-    local cumulative_weight = 0
-
-    for _, item in ipairs(drop_list) do
-        cumulative_weight = cumulative_weight + item.rarity
-        if rand <= cumulative_weight then
-            local amount = math.random(1, item.rarity * config.max_amount_multiplier)
-            return {name = item.item, amount = amount}
-        end
-    end
-
-    return nil
-end
+dofile(myfortune.modpath .. "/schematics.lua")
+dofile(myfortune.modpath .. "/functions/loot.lua")
+dofile(myfortune.modpath .. "/functions/traps.lua")
+dofile(myfortune.modpath .. "/functions/mobs.lua")
+dofile(myfortune.modpath .. "/functions/structures.lua")
 
 minetest.register_node("myfortuneblock:block", {
     description = "Fortune Block",
-    tiles = {"myfortuneblock.jpg"},
+    tiles = {"myfortuneblock.png"},
     is_ground_content = true,
-    drop = "",
     groups = {cracky = 1, level = 2},
     light_source = 10,
-
+    scale = 0.5,
     after_dig_node = function(pos, oldnode, oldmetadata, digger)
-        local drop = get_random_item(config.drop_list)
-        if drop then
-            minetest.add_item(pos, drop.name .. " " .. drop.amount)
-            if drop.name == "tnt:tnt" then
-                minetest.set_node(pos, {name = "tnt:tnt"})
-                if minetest.registered_nodes["tnt:tnt"] and
-                   minetest.registered_nodes["tnt:tnt"].on_blast then
-                    minetest.registered_nodes["tnt:tnt"].on_blast(pos, {}, {})
+        if not digger or not digger:is_player() then return end
+        
+        local player_name = digger:get_player_name()
+		local roll = math.random(1, 100)
+        
+        local struct_chance = 10
+        local mob_chance    = 10
+        local trap_chance   = 15
+
+        if roll <= struct_chance then
+            if #myfortune.schematics > 0 then
+                myfortune.spawn_schematic(pos, player_name)
+                return
+            end
+        
+        elseif roll <= (struct_chance + mob_chance) then
+            if myfortune.trigger_mob then
+                myfortune.trigger_mob(pos, player_name)
+                return
+            end
+
+        elseif roll <= (struct_chance + mob_chance + trap_chance) then
+            if #myfortune.registered_events > 0 then
+                local pick = math.random(1, #myfortune.registered_events)
+                myfortune.registered_events[pick].action(pos, digger)
+                return
+            end
+        end
+
+        local num_drops = math.random(1, 5)
+        local found_items = {}
+
+        for i = 1, num_drops do
+            local drop = myfortune.get_random_item()
+            if drop then
+                local r_data = myfortune.rarity_levels.rare
+                for _, data in pairs(myfortune.rarity_levels) do
+                    if data.weight == drop.weight then r_data = data break end
+                end
+                
+                myfortune.drop_with_style(pos, drop, r_data)
+                
+                local clean_item_name = formal_name(drop.name)
+                local colored_name = colorize(clean_item_name, r_data.color)
+                
+                table.insert(found_items, colored_name)
+                
+                if r_data.label == "Ultra Rare" then
+                    minetest.chat_send_all(minetest.colorize("#ffaa00", "[Fortune] ") .. 
+                        player_name .. " hit the Jackpot: " .. colored_name .. "!")
                 end
             end
+        end
+        
+        if #found_items > 0 then
+            minetest.chat_send_player(player_name, 
+                minetest.colorize("#ffaa00", "[Fortune] Found: ") .. table.concat(found_items, ", "))
         end
     end,
 })
@@ -124,11 +115,34 @@ minetest.register_node("myfortuneblock:block", {
 minetest.register_ore({
     ore_type       = "scatter",
     ore            = "myfortuneblock:block",
-    wherein        = {"default:stone", "default:dirt", "default:dirt_with_grass", "default:sand"},
+    wherein        = {"default:stone"},
     clust_scarcity = 15 * 15 * 15,
     clust_num_ores = 1,
     clust_size     = 1,
-    y_min          = -32000,
+    y_min          = -31000,
     y_max          = -10,
-    flags          = "absheight",
+})
+minetest.register_ore({
+    ore_type       = "scatter",
+    ore            = "myfortuneblock:block",
+    wherein        = {"default:dirt_with_grass", "default:sand", "default:desert_sand", "default:silver_sand"},
+    clust_scarcity = 30 * 30 * 30,
+    clust_num_ores = 1,
+    clust_size     = 1,
+    y_min          = -10,
+    y_max          = 100,
+})
+
+minetest.register_tool("myfortuneblock:tester_wand", {
+    description = "Admin Testing Wand",
+    inventory_image = "default_stick.png^[colorize:#ff0000:150",
+    tool_capabilities = {
+        full_punch_interval = 0.1,
+        max_drop_level = 3,
+        groupcaps = {
+            unbreakable = {times={[1]=0, [2]=0, [3]=0}, uses=0, maxlevel=3},
+            fleshy = {times={[1]=0, [2]=0, [3]=0}, uses=0, maxlevel=3},
+        },
+        damage_groups = {fleshy=10},
+    },
 })
