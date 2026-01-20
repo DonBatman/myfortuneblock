@@ -49,6 +49,7 @@ minetest.register_node("myfortuneblock:block", {
     is_ground_content = true,
     groups = {cracky = 1, level = 2},
     light_source = 10,
+    drop = "",
     scale = 0.5,
     after_dig_node = function(pos, oldnode, oldmetadata, digger)
         if not digger or not digger:is_player() then return end
