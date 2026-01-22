@@ -47,7 +47,7 @@ minetest.register_node("myfortuneblock:block", {
     description = "Fortune Block",
     tiles = {"myfortuneblock.png"},
     is_ground_content = true,
-    groups = {cracky = 1, level = 2},
+    groups = {cracky = 1, choppy = 1, dig_immediate = 3, level = 2},
     light_source = 10,
     drop = "",
     scale = 0.5,
